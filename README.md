@@ -12,6 +12,8 @@ automatically. An admin can onboard any existing user as a Doctor, assigning
 them a specialization and department. Patients book appointments, doctors manage
 their schedules, and insurance can be attached or detached from a patient at any
 point — all behind the same auth layer.
+
+
 ---
 
 ## Table of Contents
