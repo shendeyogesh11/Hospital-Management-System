@@ -36,8 +36,6 @@ public class InsuranceService {
         return patient;
     }
 
-    // HW
-    //Create three appointment for a patient and then delete Patient
 
 
 }
