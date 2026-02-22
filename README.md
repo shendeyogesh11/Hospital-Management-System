@@ -2,7 +2,7 @@
 
 A backend for hospital operations — patients, doctors, appointments, insurance —
 written in Spring Boot 3 on Java 21. The interesting parts are under the hood:
-Patient and Doctor share a primary key with User via @MapsId, authentication
+Patient and Doctor share a primary key with User via `@MapsId`, authentication
 supports both JWT and OAuth2 with auto-provisioning on first social login, and
 authorization is split across two layers — URL rules and method-level guards —
 backed by a Role → Permission map rather than raw role checks.
@@ -12,7 +12,6 @@ automatically. An admin can onboard any existing user as a Doctor, assigning
 them a specialization and department. Patients book appointments, doctors manage
 their schedules, and insurance can be attached or detached from a patient at any
 point — all behind the same auth layer.
-
 
 ---
 
@@ -28,7 +27,7 @@ point — all behind the same auth layer.
 - [Seed Data](#seed-data)
 - [API Reference](#api-reference)
 - [Error Handling](#error-handling)
-- [Known Gaps & TODOs](#known-gaps--todos)
+- [Known Bugs & TODOs](#known-bugs--todos)
 - [Running Tests](#running-tests)
 
 ---
@@ -104,7 +103,7 @@ OAuth2SuccessHandler.onAuthenticationSuccess()
 AuthService.handleOAuth2LoginRequest()
     ├─ User not found by providerId or email  → signUpInternal() → creates User + Patient
     ├─ User found by providerId              → syncs email if changed
-    └─ Email exists under different provider → throws BadCredentialsException
+    └─ Email exists under different provider → throws BadCredentialsException (403)
     │
     ▼
 Response: { jwt, userId }   (written directly to HttpServletResponse as JSON)
@@ -240,7 +239,7 @@ src/main/java/com/yogeshs/hospitalManagement/
 │   ├── Appointment.java                 ← ManyToOne Patient, ManyToOne Doctor
 │   └── type/
 │       ├── RoleType.java                ← ADMIN, DOCTOR, PATIENT
-│       ├── PermissionType.java          ← PATIENT_READ, APPOINTMENT_WRITE, USER_MANAGE, etc.
+│       ├── PermissionType.java          ← enum with .getPermission() → "appointment:delete" etc.
 │       ├── AuthProviderType.java        ← EMAIL, GOOGLE, GITHUB, FACEBOOK, TWITTER
 │       └── BloodGroupType.java          ← A_POSITIVE … O_NEGATIVE (8 values)
 │
@@ -253,7 +252,7 @@ src/main/java/com/yogeshs/hospitalManagement/
 │   └── InsuranceRepository.java         ← JpaRepository only
 │
 ├── security/
-│   ├── WebSecurityConfig.java           ← SecurityFilterChain; URL rules; stateless sessions; CSRF off
+│   ├── WebSecurityConfig.java           ← SecurityFilterChain; URL rules; stateless; CSRF off
 │   ├── JwtAuthFilter.java               ← OncePerRequestFilter; validates Bearer token
 │   ├── AuthService.java                 ← login(), signup(), handleOAuth2LoginRequest()
 │   ├── AuthUtil.java                    ← JWT build/parse; OAuth2 provider ID extraction
@@ -300,7 +299,7 @@ All of these exist in code but **no HTTP endpoint currently exposes them**:
 
 ### Role → Permission Mapping
 
-Defined statically in `RolePermissionMapping.java`. `User.getAuthorities()` returns both `ROLE_<n>` and all fine-grained permissions as `SimpleGrantedAuthority`.
+Defined in `RolePermissionMapping.java`. `User.getAuthorities()` returns both `ROLE_<n>` and all fine-grained permission strings (e.g. `"appointment:delete"`) as `SimpleGrantedAuthority` — populated via `permission.getPermission()`, not `permission.name()`.
 
 | Role | Permissions |
 |---|---|
@@ -315,9 +314,10 @@ Evaluated top-to-bottom in `WebSecurityConfig`. Sessions are `STATELESS`. CSRF i
 | Pattern | Rule |
 |---|---|
 | `/public/**`, `/auth/**` | Public |
-| `DELETE /admin/**` | Requires `appointment:delete` OR `user:manage` |
+| `DELETE /admin/**` | `hasAnyAuthority(APPOINTMENT_DELETE.name(), USER_MANAGE.name())` ⚠️ See [Known Bugs](#known-bugs--todos) |
 | `/admin/**` | Requires `ROLE_ADMIN` |
 | `/doctors/**` | Requires `ROLE_DOCTOR` or `ROLE_ADMIN` |
+| `/patients/**` | No URL-level role restriction — falls through to `anyRequest().authenticated()` |
 | All others | Must be authenticated |
 
 ### Method-Level Security
@@ -327,16 +327,16 @@ Evaluated top-to-bottom in `WebSecurityConfig`. Sessions are `STATELESS`. CSRF i
 | Method | Guard | Rule |
 |---|---|---|
 | `AppointmentService.createNewAppointment()` | `@Secured("ROLE_PATIENT")` | PATIENT only |
-| `AppointmentService.reAssignAppointmentToAnotherDoctor()` | `@PreAuthorize` | Has `appointment:write` OR caller is the target doctor |
-| `AppointmentService.getAllAppointmentsOfDoctor()` | `@PreAuthorize` | ADMIN sees any; DOCTOR sees only their own |
+| `AppointmentService.reAssignAppointmentToAnotherDoctor(appointmentId, doctorId)` | `@PreAuthorize` | Has `appointment:write` permission OR the authenticated user's ID equals the `doctorId` being assigned to |
+| `AppointmentService.getAllAppointmentsOfDoctor(doctorId)` | `@PreAuthorize` | ADMIN sees any; DOCTOR only if their ID matches `doctorId` |
 
 ### JWT Details
 
 | Property | Value |
 |---|---|
 | Algorithm | HMAC-SHA |
-| Claims | `sub` (username), `userId`, `iat`, `exp` |
-| Expiry | 10 minutes |
+| Claims | `sub` (username), `userId` (as String), `iat`, `exp` |
+| Expiry | 10 minutes (`1000 * 60 * 10` ms) |
 | Header | `Authorization: Bearer <token>` |
 
 ---
@@ -389,7 +389,7 @@ jwt.secretKey=SOME_LONG_RANDOM_STRING_MINIMUM_64_CHARACTERS_FOR_HMAC_SHA
 
 **OAuth2 (optional):**
 
-`application.yml` reads credentials from environment variables — the `${VAR}` syntax is not a placeholder you fill in the file, it means the app reads from your shell environment. Set them before running:
+`application.yml` reads credentials from environment variables — `${GOOGLE_CLIENT_ID}` is not a placeholder to fill in the file, it means the app reads from your shell environment at startup. Set them before running:
 
 **macOS / Linux:**
 ```bash
@@ -407,7 +407,7 @@ set GITHUB_CLIENT_ID=your_github_client_id
 set GITHUB_CLIENT_SECRET=your_github_client_secret
 ```
 
-If OAuth2 is not needed, remove or comment out the `google` and `github` registration blocks in `application.yml` to avoid startup errors from unresolved `${VAR}` references.
+If OAuth2 is not needed, remove or comment out the `google` and `github` registration blocks in `application.yml` to avoid startup errors from unresolved variables.
 
 OAuth2 redirect URIs to register in your provider console:
 - Google: `http://localhost:8080/login/oauth2/code/google`
@@ -564,7 +564,7 @@ Registers a new user and auto-creates a linked Patient record.
 #### `GET /oauth2/authorization/google`
 #### `GET /oauth2/authorization/github`
 
-Browser-initiated OAuth2 redirect flow. On success, returns `{ jwt, userId }` written to the response body. On failure, forwarded to the global exception handler as JSON.
+Browser-initiated redirect flow. On success, returns `{ jwt, userId }` written to the response body. On failure, forwarded to the global exception handler as JSON.
 
 ---
 
@@ -588,9 +588,9 @@ Browser-initiated OAuth2 redirect flow. On success, returns `{ jwt, userId }` wr
 
 #### `POST /patients/appointments`
 
-Books a new appointment. Additionally guarded with `@Secured("ROLE_PATIENT")` at the service layer.
+Books a new appointment. No URL-level role rule on `/patients/**` — access is controlled entirely by `@Secured("ROLE_PATIENT")` at the service layer.
 
-**Auth:** `ROLE_PATIENT`
+**Auth:** `ROLE_PATIENT` (method-level)
 
 **Request:**
 ```json
@@ -623,7 +623,7 @@ Books a new appointment. Additionally guarded with `@Secured("ROLE_PATIENT")` at
 
 #### `GET /patients/profile`
 
-**Auth:** Any authenticated user
+**Auth:** Any authenticated user (no role restriction at URL or method level)
 
 **Response `200 OK`:**
 ```json
@@ -636,7 +636,7 @@ Books a new appointment. Additionally guarded with `@Secured("ROLE_PATIENT")` at
 }
 ```
 
-> ⚠️ Patient ID is hardcoded to `4` in the controller. See [Known Gaps](#known-gaps--todos).
+> ⚠️ Patient ID is hardcoded to `4L` in the controller. See [Known Bugs](#known-bugs--todos).
 
 ---
 
@@ -644,9 +644,9 @@ Books a new appointment. Additionally guarded with `@Secured("ROLE_PATIENT")` at
 
 #### `GET /doctors/appointments`
 
-Returns all appointments for the authenticated doctor. Doctor identity is resolved from the JWT principal. `@PreAuthorize` additionally enforces a DOCTOR can only see their own; ADMIN can see any doctor's.
+Returns all appointments for the currently authenticated doctor. The doctor's ID is pulled from the JWT principal in the controller, then passed to the service where `@PreAuthorize` enforces that a DOCTOR can only retrieve their own; ADMIN can retrieve any doctor's.
 
-**Auth:** `ROLE_DOCTOR` or `ROLE_ADMIN`
+**Auth:** `ROLE_DOCTOR` or `ROLE_ADMIN` (URL-level)
 
 **Response `200 OK`:**
 ```json
@@ -740,15 +740,45 @@ All errors return a standardized `ApiError` body:
 | `AccessDeniedException` | `403 Forbidden` |
 | Any other `Exception` | `500 Internal Server Error` |
 
-JWT and access-denied exceptions thrown inside the filter chain are forwarded via `HandlerExceptionResolver`, so they also return JSON rather than the default Spring Security HTML error page.
+JWT and access-denied exceptions thrown inside the filter chain are forwarded via `HandlerExceptionResolver`, so they return JSON rather than Spring Security's default HTML error page.
 
 ---
 
+## Known Bugs & TODOs
 
+### Bugs
+
+**`DELETE /admin/**` permission check is broken**
+
+`WebSecurityConfig` calls `APPOINTMENT_DELETE.name()` and `USER_MANAGE.name()`, which return the Java enum constant names `"APPOINTMENT_DELETE"` and `"USER_MANAGE"`. But `RolePermissionMapping.getAuthoritiesForRole()` populates authorities using `permission.getPermission()`, which returns `"appointment:delete"` and `"user:manage"` (the lowercase colon-separated strings). These never match, so the `DELETE /admin/**` rule will deny every request regardless of role.
+
+Fix: replace `.name()` with `.getPermission()` in `WebSecurityConfig`:
+```java
+// Before (broken)
+.hasAnyAuthority(APPOINTMENT_DELETE.name(), USER_MANAGE.name())
+
+// After (correct)
+.hasAnyAuthority(APPOINTMENT_DELETE.getPermission(), USER_MANAGE.getPermission())
+```
+
+### TODOs
+
+| Item | Detail |
+|---|---|
+| `GET /patients/profile` hardcoded ID | Controller passes `id = 4L` directly. Should extract the authenticated user's ID from `SecurityContextHolder`. |
+| `InsuranceService.assignInsuranceToPatient()` | Fully implemented and tested; no REST endpoint wired up. |
+| `InsuranceService.disassociateInsuranceFromPatient()` | Same — no endpoint. |
+| `AppointmentService.reAssignAppointmentToAnotherDoctor()` | Implemented with `@PreAuthorize`; no REST endpoint. |
+| `PatientRepository` analytics queries | `countEachBloodGroupType()`, `findByBloodGroup()`, `findByBornAfterDate()`, search queries, `updateNameWithId()` — all implemented, none exposed via HTTP. |
+| `BloodGroupCountResponseEntity` | DTO and JPQL query exist; no endpoint returns it. |
+| Admin error responses | `onBoardNewDoctor` throws `IllegalArgumentException` (already a doctor) and an unchecked exception (user not found) — both surface as `500`. Should be `409` and `404` respectively. |
+| Twitter OAuth2 | Configured in `application.yml` with hardcoded fake credentials. Non-functional. |
+
+---
 
 ## Running Tests
 
-Tests use `@SpringBootTest` (full application context + real DB). PostgreSQL must be running and `hospitalRDB` must exist before running them.
+Tests use `@SpringBootTest` (full application context + real DB). PostgreSQL must be running and `hospitalRDB` must exist.
 
 ```bash
 # macOS / Linux
