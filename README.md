@@ -27,7 +27,6 @@ point — all behind the same auth layer.
 - [Seed Data](#seed-data)
 - [API Reference](#api-reference)
 - [Error Handling](#error-handling)
-- [Known Bugs & TODOs](#known-bugs--todos)
 - [Running Tests](#running-tests)
 
 ---
@@ -314,7 +313,7 @@ Evaluated top-to-bottom in `WebSecurityConfig`. Sessions are `STATELESS`. CSRF i
 | Pattern | Rule |
 |---|---|
 | `/public/**`, `/auth/**` | Public |
-| `DELETE /admin/**` | `hasAnyAuthority(APPOINTMENT_DELETE.name(), USER_MANAGE.name())` ⚠️ See [Known Bugs](#known-bugs--todos) |
+| `DELETE /admin/**` | `hasAnyAuthority(APPOINTMENT_DELETE.name(), USER_MANAGE.name())` |
 | `/admin/**` | Requires `ROLE_ADMIN` |
 | `/doctors/**` | Requires `ROLE_DOCTOR` or `ROLE_ADMIN` |
 | `/patients/**` | No URL-level role restriction — falls through to `anyRequest().authenticated()` |
