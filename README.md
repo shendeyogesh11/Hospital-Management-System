@@ -636,8 +636,6 @@ Books a new appointment. No URL-level role rule on `/patients/**` — access is 
 }
 ```
 
-> ⚠️ Patient ID is hardcoded to `4L` in the controller. See [Known Bugs](#known-bugs--todos).
-
 ---
 
 ### Doctor
@@ -741,38 +739,6 @@ All errors return a standardized `ApiError` body:
 | Any other `Exception` | `500 Internal Server Error` |
 
 JWT and access-denied exceptions thrown inside the filter chain are forwarded via `HandlerExceptionResolver`, so they return JSON rather than Spring Security's default HTML error page.
-
----
-
-## Known Bugs & TODOs
-
-### Bugs
-
-**`DELETE /admin/**` permission check is broken**
-
-`WebSecurityConfig` calls `APPOINTMENT_DELETE.name()` and `USER_MANAGE.name()`, which return the Java enum constant names `"APPOINTMENT_DELETE"` and `"USER_MANAGE"`. But `RolePermissionMapping.getAuthoritiesForRole()` populates authorities using `permission.getPermission()`, which returns `"appointment:delete"` and `"user:manage"` (the lowercase colon-separated strings). These never match, so the `DELETE /admin/**` rule will deny every request regardless of role.
-
-Fix: replace `.name()` with `.getPermission()` in `WebSecurityConfig`:
-```java
-// Before (broken)
-.hasAnyAuthority(APPOINTMENT_DELETE.name(), USER_MANAGE.name())
-
-// After (correct)
-.hasAnyAuthority(APPOINTMENT_DELETE.getPermission(), USER_MANAGE.getPermission())
-```
-
-### TODOs
-
-| Item | Detail |
-|---|---|
-| `GET /patients/profile` hardcoded ID | Controller passes `id = 4L` directly. Should extract the authenticated user's ID from `SecurityContextHolder`. |
-| `InsuranceService.assignInsuranceToPatient()` | Fully implemented and tested; no REST endpoint wired up. |
-| `InsuranceService.disassociateInsuranceFromPatient()` | Same — no endpoint. |
-| `AppointmentService.reAssignAppointmentToAnotherDoctor()` | Implemented with `@PreAuthorize`; no REST endpoint. |
-| `PatientRepository` analytics queries | `countEachBloodGroupType()`, `findByBloodGroup()`, `findByBornAfterDate()`, search queries, `updateNameWithId()` — all implemented, none exposed via HTTP. |
-| `BloodGroupCountResponseEntity` | DTO and JPQL query exist; no endpoint returns it. |
-| Admin error responses | `onBoardNewDoctor` throws `IllegalArgumentException` (already a doctor) and an unchecked exception (user not found) — both surface as `500`. Should be `409` and `404` respectively. |
-| Twitter OAuth2 | Configured in `application.yml` with hardcoded fake credentials. Non-functional. |
 
 ---
 
